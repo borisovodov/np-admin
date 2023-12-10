@@ -2,18 +2,25 @@
 export default {
   // Это точка входа. Мы получаем запрос, который будем в дальнейшем обрабатывать, переменные окружения и контекст выполнения кода.
   async fetch(request, env, context) {
-    // Это пример того, как полуются переменные окружения.
-    //const BOT_TOKEN = "${env.BOT_TOKEN}"
-
     // Преобразуем полученный запрос в JSON-объект.
     let body = JSON.parse(JSON.stringify(await request.json()));
 
-    // Формируем содержимое ответа на запрос.
+    // Черновиково получаем данные из БД.
+    const { results } = await env.NP_DATABASE.prepare('SELECT * FROM newspaper').all()
+
+    // Сами формируем что показать в ответном сообщении в Телеграме.
+    let text = {
+      "username": body.message.from.username,
+      "text": body.message.text,
+      "results": results,
+    };
+
+    // Формируем содержимое ответа на запрос для Телеграма.
     let answer = {
-           "method":"sendMessage",
-           "chat_id": body.message.chat.id,
-           "reply_to_message_id" : body.message.message_id,
-           "text" :JSON.stringify(body.message)
+       "method":"sendMessage",
+       "chat_id": body.message.chat.id,
+       "reply_to_message_id": body.message.message_id,
+       "text": JSON.stringify(text),
     };
 
     // Формируем ответ на запрос.
