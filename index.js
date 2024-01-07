@@ -5,31 +5,13 @@ export default {
     // Преобразуем полученный запрос в JSON-объект.
     const body = await getRequestBody(request)
 
-    const authorization = auth(body)
-
-    var allNewspapers
-    var files
-
-    if (authorization) {
-      // Черновиково получаем данные из БД.
-      allNewspapers = await getAllNewspapers(env)
-
-      // Черновиково получаем данные из ФХ.
-      // https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
-      files = await getFilesList(env)
-
-      // Черновиково загружаем данные в файловое хранилище.
-      await uploadFile(env)
+    if (auth(body)) {
+      // Формируем и возвращаем ответ на запрос.
+      return await getAuthSuccessResponse(env, body)
+    } else {
+      // Формируем и возвращаем ответ на запрос с отказом.
+      return getAuthFailureResponse(body)
     }
-
-    // Сами формируем что показать в ответном сообщении в Телеграме.
-    let text = prepareAnswerText(body, authorization, allNewspapers, files)
-
-    // Формируем содержимое ответа на запрос для Телеграма.
-    let answer = prepareTelegramAnswer(body, text)
-
-    // Формируем и возвращаем ответ на запрос.
-    return getResponse(answer)
   },
 };
 
@@ -60,19 +42,19 @@ async function uploadFile(env) {
   await env.bucket.put(key, file)
 }
 
-function prepareAnswerText(body, auth, allNewspapers = [], files = null) {
-  if (auth) {
-    return {
-      "username": body.message.from.username,
-      "text": body.message.text,
-      "results": allNewspapers,
-      "files": files.objects,
-      "auth": auth,
-      "body": body,
-    }
-  } else {
-    return "https://www.youtube.com/watch?v=tmozGmGoJuw"
+function prepareAnswerText(body, allNewspapers, files) {
+  return {
+    "username": body.message.from.username,
+    "text": body.message.text,
+    "results": allNewspapers,
+    "files": files.objects,
+    "auth": auth,
+    "body": body,
   }
+}
+
+function prepareAnswerTextAuthFailure() {
+  return "https://www.youtube.com/watch?v=tmozGmGoJuw"
 }
 
 function prepareTelegramAnswer(body, text) {
@@ -84,6 +66,14 @@ function prepareTelegramAnswer(body, text) {
   }
 }
 
+function prepareTelegramAnswerAuthFailure(body, text) {
+  return {
+    "method":"sendMessage",
+    "chat_id": body.message.chat.id,
+    "text": text,
+  }
+}
+
 function getResponse(answer) {
   return new Response(
     JSON.stringify(answer), {
@@ -92,4 +82,36 @@ function getResponse(answer) {
       },
       status: 200
     })
+}
+
+async function getAuthSuccessResponse(env, body) {
+  // Черновиково получаем данные из БД.
+  const allNewspapers = await getAllNewspapers(env)
+
+  // Черновиково получаем данные из ФХ.
+  // https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
+  const files = await getFilesList(env)
+
+  // Черновиково загружаем данные в файловое хранилище.
+  await uploadFile(env)
+
+  // Сами формируем что показать в ответном сообщении в Телеграме.
+  let text = prepareAnswerText(body, allNewspapers, files)
+
+  // Формируем содержимое ответа на запрос для Телеграма.
+  let answer = prepareTelegramAnswer(body, text)
+
+  // Формируем и возвращаем ответ на запрос.
+  return getResponse(answer)
+}
+
+function getAuthFailureResponse(body) {
+  // Готовим текст, чтобы послать нахер.
+  let text = prepareAnswerTextAuthFailure()
+
+  // Формируем сообщение с отклоненим для Телеграма.
+  let answer = prepareTelegramAnswerAuthFailure(body, text)
+
+  // Формируем и возвращаем ответ на запрос.
+  return getResponse(answer)
 }
