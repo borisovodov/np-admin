@@ -68,6 +68,7 @@ function prepareAnswerText(body, auth, allNewspapers = [], files = null) {
       "results": allNewspapers,
       "files": files.objects,
       "auth": auth,
+      "body": body,
     }
   } else {
     return "https://www.youtube.com/watch?v=tmozGmGoJuw"
