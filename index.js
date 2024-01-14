@@ -3,7 +3,7 @@ export default {
   // Это точка входа. Мы получаем запрос, который будем в дальнейшем обрабатывать, переменные окружения и контекст выполнения кода.
   async fetch(request, env, context) {
     // Преобразуем полученный запрос в JSON-объект.
-    const body = await getRequestBody(request)
+    const body = JSON.parse(JSON.stringify(await request.json()))
 
     if (auth(body)) {
       // Формируем и возвращаем ответ на запрос.
@@ -15,9 +15,9 @@ export default {
   },
 };
 
-async function getRequestBody(request) {
-  return JSON.parse(JSON.stringify(await request.json()))
-}
+const commands = ["/newspapers", "/languages", "/countries", "/cities", "/senders", 
+  "/formatpapers", "/tags", "/currencies", "/addnewspaper", "/addlanguage", 
+  "/addcountry", "/addcity", "/addsender", "/addformatpaper", "/addtag", "/addcurrency"]
 
 function auth(body) {
   // Определяем список юзернэймов, у кого будет доступ к боту.
@@ -26,20 +26,24 @@ function auth(body) {
   return admins.includes(body.message.from.username)
 }
 
-async function getAllNewspapers(env) {
-  return await env.db.prepare('SELECT * FROM newspaper').all()
+class Bucket {
+  static async getFilesList(env) {
+    return await env.bucket.list()
+  }
+
+  static async uploadFile(env) {
+    var key = "tratratra1.txt"
+    var contents = "lalaland"
+    var blob = new Blob([contents], { type: 'text/plain' })
+    var file = new File([blob], key, {type: "text/plain"})
+    await env.bucket.put(key, file)
+  }
 }
 
-async function getFilesList(env) {
-  return await env.bucket.list()
-}
-
-async function uploadFile(env) {
-  var key = "tratratra1.txt"
-  var contents = "lalaland"
-  var blob = new Blob([contents], { type: 'text/plain' })
-  var file = new File([blob], key, {type: "text/plain"})
-  await env.bucket.put(key, file)
+class Newspaper {
+  static async all(env) {
+    return await env.db.prepare('SELECT * FROM newspaper').all()
+  }
 }
 
 function prepareAnswerText(body, allNewspapers, files) {
@@ -86,14 +90,14 @@ function getResponse(answer) {
 
 async function getAuthSuccessResponse(env, body) {
   // Черновиково получаем данные из БД.
-  const allNewspapers = await getAllNewspapers(env)
+  const allNewspapers = await Newspaper.all(env)
 
   // Черновиково получаем данные из ФХ.
   // https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
-  const files = await getFilesList(env)
+  const files = await Bucket.getFilesList(env)
 
   // Черновиково загружаем данные в файловое хранилище.
-  await uploadFile(env)
+  await Bucket.uploadFile(env)
 
   // Сами формируем что показать в ответном сообщении в Телеграме.
   let text = prepareAnswerText(body, allNewspapers, files)
