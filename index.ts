@@ -1,5 +1,5 @@
 // Это работа с модулями, без которой не работает D1 и вебхуки работают через листнеры — то бишь через жопу.
-export default {
+export default <ExportedHandler>{
   // Это точка входа. Мы получаем запрос, который будем в дальнейшем обрабатывать, переменные окружения и контекст выполнения кода.
   async fetch(request, env, context) {
     // Преобразуем полученный запрос в JSON-объект.
@@ -129,6 +129,10 @@ class Newspaper {
 }
 
 class Language {
+  id: string
+  name: string
+  population: number
+
   constructor(state) {
     //this.id = new Crypto().randomUUID()
     this.id = crypto.randomUUID()
@@ -142,6 +146,8 @@ class Language {
 }
 
 class User {
+  username: string
+
   constructor(body) {
     const username = body.message.from.username
 
@@ -161,6 +167,8 @@ class User {
 }
 
 class State {
+  current: string[]
+
   constructor() {
     this.current = []
   }
