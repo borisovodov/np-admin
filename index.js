@@ -6,25 +6,78 @@ export default {
     const body = JSON.parse(JSON.stringify(await request.json()))
 
     try {
-      let user = new User(body)
+      const user = new User(body)
+      const state = new State()
+      await state.update(env, body, user)
 
-      // Получение сохранённого ранее стэйта.
-      const state = await user.state(env, body)
+      let text
+      let answer
 
-      // Выясняем начинается ли стэйт с команды. Если нет, то нужна отписка.
-      if (!isFirstMessageACommand(state)) {
-        // Сами формируем что показать в ответном сообщении в Телеграме.
-        let text = "Напишите всё же команду."
-
-        // TODO: Вот тут нужно очищать состояние, что было записано.
-
-        // Формируем содержимое ответа на запрос для Телеграма.
-        let answer = prepareTelegramAnswer(body, text)
-
-        // Формируем и возвращаем ответ на запрос.
-        return getResponse(answer)
+      // Собственно работаем со стэйтом. Проверяем первую команду.
+      switch (state.current[0]) {
+      case "/addlanguage":
+        // Понять на каком этапе создания языка мы находимся.
+        switch (state.current.length) {
+        case 1:
+          // Пишем просьбу о названии языка.
+          text = "Напишите пожалуйста название создаваемого языка."
+          answer = prepareTelegramAnswer(body, text)
+          return getResponse(answer)
+        case 2:
+          // Проверяем название языка.
+          // Пишем просьбу о количестве носителей языка.
+          text = "Напишите пожалуйста количество носителей создаваемого языка."
+          answer = prepareTelegramAnswer(body, text)
+          return getResponse(answer)
+        case 3:
+          // Проверяем количество носителей языка.
+          // Создаём язык.
+          const language = new Language(state)
+          await language.save(env)
+          // Пишем радостное сообщение о том, какой язык мы создали.
+          text = "Ура! Был создан язык: " + language.name
+          answer = prepareTelegramAnswer(body, text)
+          // Сбрасываем стэйт.
+          state.reset(env, user)
+          // Отправляем сообщение.
+          return getResponse(answer)
+        }
+        break
+      case "/addcountry":
+        break
+      case "/addcity":
+        break
+      case "/addsender":
+        break
+      case "/addformatpaper":
+        break
+      case "/addtag":
+        break
+      case "/addnewspaper":
+        break
+      case "/addcurrency":
+        break
+      case "/newspapers":
+        break
+      case "/languages":
+        break
+      case "/countries":
+        break
+      case "/cities":
+        break
+      case "/senders":
+        break
+      case "/formatpapers":
+        break
+      case "/tags":
+        break
+      case "/currencies":
+        break
+      default:
+        return await getFirstMessageIsNotCommandResponse(env, body, user, state)
       }
 
+      /*
       // Развёртываем стэйт.
 
       // Формируем и возвращаем ответ на запрос.
@@ -46,7 +99,9 @@ export default {
 
       // Формируем и возвращаем ответ на запрос.
       return getResponse(answer)
+      */
     } catch(error) {
+      // TODO: здесь нужно пробрасывать разные ответы в зависимости от сути ошибки. Не все ошибки — про аутентификацию.
       // Формируем и возвращаем ответ на запрос с отказом.
       return getAuthFailureResponse(body, error)
     }
@@ -73,6 +128,19 @@ class Newspaper {
   }
 }
 
+class Language {
+  constructor(state) {
+    //this.id = new Crypto().randomUUID()
+    this.id = crypto.randomUUID()
+    this.name = state[1]
+    this.population = parseInt(state[2])
+  }
+
+  async save(env) {
+    await env.db.prepare("INSERT INTO Language (id, name, population) VALUES (?, ?, ?)").bind(this.id, this.name, this.population).run()
+  }
+}
+
 class User {
   constructor(body) {
     const username = body.message.from.username
@@ -84,22 +152,6 @@ class User {
     }
   }
 
-  async state(env, body) {
-    // Получаем текущий стэйт, чтобы проверить, что он вообще есть.
-    const currentState = await env.db.prepare("SELECT state FROM User WHERE username = ?").bind(this.username).all()
-
-    // Если текущего стэйта нет (то есть не возвращается ни одного объекта), то создаём новую строку и наполняем её новым сообщением.
-    if (currentState.results.length == 0) {
-      await env.db.prepare("INSERT INTO User (username, state) VALUES (?, ?)").bind(this.username, body.message.text).run()
-      return body.message.text
-    }
-
-    // Если стэйт есть, то возвращаем текущий стэйт + новое сообщение.
-    const newState = currentState.results[0].state + "\t" + body.message.text
-    await env.db.prepare("UPDATE User SET state = ? WHERE username = ?").bind(newState, this.username).run()
-    return newState
-  }
-
   static #auth(username) {
     // Определяем список юзернэймов, у кого будет доступ к боту.
     const admins = ["borisovodov"]
@@ -108,12 +160,34 @@ class User {
   }
 }
 
-function isFirstMessageACommand(state) {
-  const commands = ["/newspapers", "/languages", "/countries", "/cities", "/senders", 
-  "/formatpapers", "/tags", "/currencies", "/addnewspaper", "/addlanguage", 
-  "/addcountry", "/addcity", "/addsender", "/addformatpaper", "/addtag", "/addcurrency"]
+class State {
+  constructor() {
+    this.current = []
+  }
 
-  return commands.includes(state.split("\t")[0])
+  async update(env, body, user) {
+    // Получаем текущий стэйт, чтобы проверить, что он вообще есть.
+    const currentState = await env.db.prepare("SELECT state FROM User WHERE username = ?").bind(user.username).all()
+
+    // Если текущего стэйта нет (то есть не возвращается ни одного объекта), то создаём новую строку и наполняем её новым сообщением.
+    if (currentState.results.length == 0) {
+      await env.db.prepare("INSERT INTO User (username, state) VALUES (?, ?)").bind(user.username, body.message.text).run()
+      this.current = [body.message.text]
+    } else {
+      // Если стэйт есть, то возвращаем текущий стэйт + новое сообщение.
+      const newState = currentState.results[0].state + "\t" + body.message.text
+      await env.db.prepare("UPDATE User SET state = ? WHERE username = ?").bind(newState, user.username).run()
+      this.current = newState.split("\t")
+    }
+  }
+
+  async reset(env, user) {
+    // Удаляем из БД.
+    await env.db.prepare("DELETE FROM User WHERE username = ?").bind(user.username).run()
+
+    // Очистить свойство.
+    this.current = []
+  }
 }
 
 function prepareAnswerText(body, allNewspapers, files, state) {
@@ -122,14 +196,9 @@ function prepareAnswerText(body, allNewspapers, files, state) {
     "text": body.message.text,
     "results": allNewspapers,
     "files": files.objects,
-    "state": state,
+    "state": state.current,
     "body": body,
   }
-}
-
-function prepareAnswerTextAuthFailure(error) {
-  return "Чёт трабла какая-то: " + error
-  //https://www.youtube.com/watch?v=tmozGmGoJuw
 }
 
 function prepareTelegramAnswer(body, text) {
@@ -138,14 +207,6 @@ function prepareTelegramAnswer(body, text) {
     "chat_id": body.message.chat.id,
     "reply_to_message_id": body.message.message_id,
     "text": JSON.stringify(text),
-  }
-}
-
-function prepareTelegramAnswerAuthFailure(body, text) {
-  return {
-    "method":"sendMessage",
-    "chat_id": body.message.chat.id,
-    "text": text,
   }
 }
 
@@ -159,12 +220,26 @@ function getResponse(answer) {
     })
 }
 
+async function getFirstMessageIsNotCommandResponse(env, body, user, state) {
+  // Сами формируем что показать в ответном сообщении в Телеграме.
+  let text = "Напишите всё же команду."
+
+  // Очищаем состояние, что было записано. То есть сбросываем стэйт.
+  await state.reset(env, user)
+
+  // Формируем содержимое ответа на запрос для Телеграма.
+  let answer = prepareTelegramAnswer(body, text)
+
+  // Формируем и возвращаем ответ на запрос.
+  return getResponse(answer)
+}
+
 function getAuthFailureResponse(body, error) {
   // Готовим текст, чтобы послать нахер.
-  let text = prepareAnswerTextAuthFailure()
+  let text = "Чёт трабла какая-то: " + error
 
-  // Формируем сообщение с отклоненим для Телеграма.
-  let answer = prepareTelegramAnswerAuthFailure(body, text)
+  // Формируем содержимое ответа на запрос для Телеграма.
+  let answer = prepareTelegramAnswer(body, text)
 
   // Формируем и возвращаем ответ на запрос.
   return getResponse(answer)
