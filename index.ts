@@ -105,8 +105,8 @@ export default { //<ExportedHandler>{
       // Формируем и возвращаем ответ на запрос с отказом.
       return getAuthFailureResponse(body, error)
     }
-  },
-};
+  }
+}
 
 class Bucket {
   static async getFilesList(env) {
