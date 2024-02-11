@@ -5,106 +5,78 @@ export default {
     // Преобразуем полученный запрос в JSON-объект.
     const body = JSON.parse(JSON.stringify(await request.json()))
 
+    let user
+    let state
+
     try {
-      const user = new User(body)
-      const state = new State()
-      await state.update(env, body, user)
-
-      let text
-      let answer
-
-      // Собственно работаем со стэйтом. Проверяем первую команду.
-      switch (state.current[0]) {
-      case "/addlanguage":
-        // Понять на каком этапе создания языка мы находимся.
-        switch (state.current.length) {
-        case 1:
-          // Пишем просьбу о названии языка.
-          text = "Напишите пожалуйста название создаваемого языка."
-          answer = prepareTelegramAnswer(body, text)
-          return getResponse(answer)
-        case 2:
-          // Проверяем название языка.
-          // Пишем просьбу о количестве носителей языка.
-          text = "Напишите пожалуйста количество носителей создаваемого языка."
-          answer = prepareTelegramAnswer(body, text)
-          return getResponse(answer)
-        case 3:
-          // Проверяем количество носителей языка.
-          // Создаём язык.
-          const language = new Language(state)
-          await language.save(env)
-          // Пишем радостное сообщение о том, какой язык мы создали.
-          text = "Ура! Был создан язык: " + language.name
-          answer = prepareTelegramAnswer(body, text)
-          // Сбрасываем стэйт.
-          state.reset(env, user)
-          // Отправляем сообщение.
-          return getResponse(answer)
-        }
-        break
-      case "/addcountry":
-        break
-      case "/addcity":
-        break
-      case "/addsender":
-        break
-      case "/addformatpaper":
-        break
-      case "/addtag":
-        break
-      case "/addnewspaper":
-        break
-      case "/addcurrency":
-        break
-      case "/newspapers":
-        break
-      case "/languages":
-        break
-      case "/countries":
-        break
-      case "/cities":
-        break
-      case "/senders":
-        break
-      case "/formatpapers":
-        break
-      case "/tags":
-        break
-      case "/currencies":
-        break
-      default:
-        return await getFirstMessageIsNotCommandResponse(env, body, user, state)
-      }
-
-      /*
-      // Развёртываем стэйт.
-
-      // Формируем и возвращаем ответ на запрос.
-      // Черновиково получаем данные из БД.
-      const allNewspapers = await Newspaper.all(env)
-
-      // Черновиково получаем данные из ФХ.
-      // https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
-      const files = await Bucket.getFilesList(env)
-
-      // Черновиково загружаем данные в файловое хранилище.
-      await Bucket.uploadFile(env)
-
-      // Сами формируем что показать в ответном сообщении в Телеграме.
-      let text = prepareAnswerText(body, allNewspapers, files, state)
-
-      // Формируем содержимое ответа на запрос для Телеграма.
-      let answer = prepareTelegramAnswer(body, text)
-
-      // Формируем и возвращаем ответ на запрос.
-      return getResponse(answer)
-      */
+      user = new User(body)
     } catch(error) {
-      // TODO: здесь нужно пробрасывать разные ответы в зависимости от сути ошибки. Не все ошибки — про аутентификацию.
       // Формируем и возвращаем ответ на запрос с отказом.
       return getAuthFailureResponse(body, error)
     }
+
+    try {
+      state = new State()
+      await state.update(env, body, user)
+    } catch(error) {
+      await state.reset(env, user)
+      return getExceptionResponse(body, error)
+    }
+
+    // Собственно работаем со стэйтом. Проверяем первую команду.
+    switch (state.current[0]) {
+    case "/addlanguage":
+      return await Language.creating(env, body, user, state)
+    case "/addcountry":
+      return await Country.creating(env, body, user, state)
+    case "/addcity":
+      break
+    case "/addsender":
+      break
+    case "/addformatpaper":
+      break
+    case "/addtag":
+      break
+    case "/addnewspaper":
+      break
+    case "/addcurrency":
+      break
+    case "/newspapers":
+      break
+    case "/languages":
+      break
+    case "/countries":
+      break
+    case "/cities":
+      break
+    case "/senders":
+      break
+    case "/formatpapers":
+      break
+    case "/tags":
+      break
+    case "/currencies":
+      break
+    default:
+      return await getFirstMessageIsNotCommandResponse(env, body, user, state)
+    }
+
+    /*
+    // Развёртываем стэйт.
+
+    // Формируем и возвращаем ответ на запрос.
+    // Черновиково получаем данные из БД.
+    const allNewspapers = await Newspaper.all(env)
+
+    // Сами формируем что показать в ответном сообщении в Телеграме.
+    let text = prepareAnswerText(body, allNewspapers, files, state)
+
+    // Формируем содержимое ответа на запрос для Телеграма.
+    let answer = prepareTelegramAnswer(body, text)
+
+    // Формируем и возвращаем ответ на запрос.
+    return getResponse(answer)
+    */
   },
 };
 
@@ -113,11 +85,17 @@ class Bucket {
     return await env.bucket.list()
   }
 
+  /*
   static async uploadFile(env) {
     var key = "tratratra1.txt"
     var contents = "lalaland"
     var blob = new Blob([contents], { type: 'text/plain' })
     var file = new File([blob], key, {type: "text/plain"})
+    await env.bucket.put(key, file)
+  }
+  */
+
+  static async uploadFile(env, key, file) {
     await env.bucket.put(key, file)
   }
 }
@@ -130,14 +108,137 @@ class Newspaper {
 
 class Language {
   constructor(state) {
-    //this.id = new Crypto().randomUUID()
     this.id = crypto.randomUUID()
-    this.name = state[1]
-    this.population = parseInt(state[2])
+    this.name = state.current[1]
+    this.population = parseInt(state.current[2])
   }
 
   async save(env) {
     await env.db.prepare("INSERT INTO Language (id, name, population) VALUES (?, ?, ?)").bind(this.id, this.name, this.population).run()
+  }
+
+  static async creating(env, body, user, state) {
+    let text
+    let answer
+
+    try {
+      // Понять на каком этапе создания языка мы находимся.
+      switch (state.current.length) {
+      case 1:
+        // Пишем просьбу о названии языка.
+        text = "Напишите пожалуйста название создаваемого языка."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 2:
+        // Проверяем название языка.
+        // Пишем просьбу о количестве носителей языка.
+        text = "Напишите пожалуйста количество носителей создаваемого языка."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 3:
+        // TODO: Проверяем количество носителей языка.
+        // Создаём язык.
+        const language = new Language(state)
+        await language.save(env)
+        // Пишем радостное сообщение о том, какой язык мы создали.
+        text = "Ура! Был создан язык: " + language.name
+        answer = prepareTelegramAnswer(body, text)
+        // Сбрасываем стэйт.
+        await state.reset(env, user)
+        // Отправляем сообщение.
+        return getResponse(answer)
+      default:
+        throw new Error("tooManyStepsInStateInLanguageCreating")
+      }
+    } catch(error) {
+      await state.reset(env, user)
+      return getExceptionResponse(body, error)
+    }
+  }
+}
+
+class Country {
+  constructor(state) {
+    this.id = crypto.randomUUID()
+    this.name = state.current[1]
+    this.emoji = state.current[2]
+    this.population = parseInt(state.current[3])
+    // TODO: нужно думать.
+    //this.marker = state.current[4]
+    //this.languages = state.current[5]
+  }
+
+  async save(env) {
+    await env.db.prepare("INSERT INTO Country (id, name, emoji, population) VALUES (?, ?, ?, ?)").bind(this.id, this.name, this.emoji, this.population).run()
+    // TODO: тут нужно предусмотреть также создание объектов в таблице `CountryAndLanguage`.
+    //await env.db.prepare("INSERT INTO Country (id, name, emoji, population, marker) VALUES (?, ?, ?, ?, ?)").bind(this.id, this.name, this.emoji, this.population, this.marker).run()
+    // ???
+  }
+
+  static async creating(env, body, user, state) {
+    let text
+    let answer
+
+    try {
+      // Понять на каком этапе создания мы находимся.
+      switch (state.current.length) {
+      case 1:
+        // Пишем просьбу о названии страны.
+        text = "Напишите пожалуйста название создаваемой страны."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 2:
+        // Проверяем название страны.
+        // Пишем просьбу об эмодзи страны.
+        text = "Напишите пожалуйста эмодзи создаваемой страны."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 3:
+        // TODO: Проверяем эмодзи.
+        // Пишем просьбу о количестве жителей страны.
+        text = "Напишите пожалуйста количество жителей создаваемой страны."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 4:
+        // TODO: Проверяем количество жителей страны.
+        // Запрашиваем файл с маркером.
+        text = "Отправьте файл с изображением маркера страны. Он будет использоваться на карте."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 5:
+        // TODO: Работаем с маркером.
+        //const fileName = "markers/" + body.message.document.file_name
+        const fileName = body.message.document.file_name
+        const filePathUrl = "https://api.telegram.org/bot" + env.BOT_TOKEN + "/getFile?file_id=" + body.message.document.file_id
+        const filePathResponse = await fetch(filePathUrl)
+        const data = await filePathResponse.json()
+        const downloadURL = "https://api.telegram.org/file/bot" + env.BOT_TOKEN + "/" + data.result.file_path
+        const markerResponse = await fetch(downloadURL)
+
+        // TODO: Здесь возникает ошибка, потому что передаю неверный тип данных для запроса на сохранения объекта в БД: `TypeError: Failed to execute 'put' on 'R2Bucket': parameter 2 is not of type 'ReadableStream or ArrayBuffer or ArrayBufferView or string or Blob'.` Может быть тут ответ: https://blog.logrocket.com/programmatically-downloading-files-browser/
+        await Bucket.uploadFile(env, fileName, markerResponse.blob())
+
+        text = prepareAnswerText(body, state)
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 6:
+        // Создаём страну.
+        const country = new Country(state)
+        await country.save(env)
+        // Пишем радостное сообщение о том, какой язык мы создали.
+        text = "Ура! Была создана страна: " + country.name
+        answer = prepareTelegramAnswer(body, text)
+        // Сбрасываем стэйт.
+        await state.reset(env, user)
+        // Отправляем сообщение.
+        return getResponse(answer)
+      default:
+        throw new Error("tooManyStepsInStateInCountryCreating")
+      }
+    } catch(error) {
+      await state.reset(env, user)
+      return getExceptionResponse(body, error)
+    }
   }
 }
 
@@ -148,7 +249,7 @@ class User {
     if (User.#auth(username)) {
       this.username = username
     } else {
-      throw new Error("userIsNotAdmin");
+      throw new Error("userIsNotAdmin")
     }
   }
 
@@ -190,13 +291,14 @@ class State {
   }
 }
 
-function prepareAnswerText(body, allNewspapers, files, state) {
+function prepareAnswerText(body, state, allNewspapers, files, data) {
   return {
     "username": body.message.from.username,
     "text": body.message.text,
-    "results": allNewspapers,
-    "files": files.objects,
+    //"results": allNewspapers,
+    //"files": files.objects,
     "state": state.current,
+    "data": data,
     "body": body,
   }
 }
@@ -234,9 +336,20 @@ async function getFirstMessageIsNotCommandResponse(env, body, user, state) {
   return getResponse(answer)
 }
 
+function getExceptionResponse(body, error) {
+  // Готовим текст, чтобы сообщить об ошибке.
+  const text = "Чёт какая-то трабла возникла: " + error
+
+  // Формируем содержимое ответа на запрос для Телеграма.
+  const answer = prepareTelegramAnswer(body, text)
+
+  // Формируем и возвращаем ответ на запрос.
+  return getResponse(answer)
+}
+
 function getAuthFailureResponse(body, error) {
   // Готовим текст, чтобы послать нахер.
-  const text = "Чёт трабла какая-то: " + error
+  const text = "Не удалось аутентифицировать пользователя: " + error
 
   // Формируем содержимое ответа на запрос для Телеграма.
   const answer = prepareTelegramAnswer(body, text)
