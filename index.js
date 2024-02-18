@@ -17,7 +17,7 @@ export default {
 
     try {
       state = new State()
-      await state.update(env, body, user)
+      await state.addRow(env, user, body.message.text)
     } catch(error) {
       await state.reset(env, user)
       return getExceptionResponse(body, error)
@@ -79,26 +79,6 @@ export default {
     */
   },
 };
-
-class Bucket {
-  static async getFilesList(env) {
-    return await env.bucket.list()
-  }
-
-  /*
-  static async uploadFile(env) {
-    var key = "tratratra1.txt"
-    var contents = "lalaland"
-    var blob = new Blob([contents], { type: 'text/plain' })
-    var file = new File([blob], key, {type: "text/plain"})
-    await env.bucket.put(key, file)
-  }
-  */
-
-  static async uploadFile(env, key, file) {
-    await env.bucket.put(key, file)
-  }
-}
 
 class Newspaper {
   static async all(env) {
@@ -163,15 +143,14 @@ class Country {
     this.name = state.current[1]
     this.emoji = state.current[2]
     this.population = parseInt(state.current[3])
+    this.marker = state.current[5]
     // TODO: нужно думать.
-    //this.marker = state.current[4]
     //this.languages = state.current[5]
   }
 
   async save(env) {
-    await env.db.prepare("INSERT INTO Country (id, name, emoji, population) VALUES (?, ?, ?, ?)").bind(this.id, this.name, this.emoji, this.population).run()
+    await env.db.prepare("INSERT INTO Country (id, name, emoji, population, marker) VALUES (?, ?, ?, ?, ?)").bind(this.id, this.name, this.emoji, this.population, this.marker).run()
     // TODO: тут нужно предусмотреть также создание объектов в таблице `CountryAndLanguage`.
-    //await env.db.prepare("INSERT INTO Country (id, name, emoji, population, marker) VALUES (?, ?, ?, ?, ?)").bind(this.id, this.name, this.emoji, this.population, this.marker).run()
     // ???
   }
 
@@ -206,22 +185,39 @@ class Country {
         answer = prepareTelegramAnswer(body, text)
         return getResponse(answer)
       case 5:
-        // TODO: Работаем с маркером.
-        //const fileName = "markers/" + body.message.document.file_name
-        const fileName = body.message.document.file_name
+        // Работаем с маркером.
+        let marker
+        // С этим названием будем сохранять файл в файлохранилище. `markers/` нужен для того, чтобы файлики сохранялись в папке.
+        const fileName = "markers/" + body.message.document.file_name
+        // Получаем URL на скачивание файла.
         const filePathUrl = "https://api.telegram.org/bot" + env.BOT_TOKEN + "/getFile?file_id=" + body.message.document.file_id
         const filePathResponse = await fetch(filePathUrl)
         const data = await filePathResponse.json()
+        // Делаем запрос на скачивание файла.
         const downloadURL = "https://api.telegram.org/file/bot" + env.BOT_TOKEN + "/" + data.result.file_path
-        const markerResponse = await fetch(downloadURL)
+        await fetch(downloadURL).then(response => response.blob()).then(blob => {
+          // Тут сохраняем блоб с самим файлом.
+          marker = blob
+        })
 
-        // TODO: Здесь возникает ошибка, потому что передаю неверный тип данных для запроса на сохранения объекта в БД: `TypeError: Failed to execute 'put' on 'R2Bucket': parameter 2 is not of type 'ReadableStream or ArrayBuffer or ArrayBufferView or string or Blob'.` Может быть тут ответ: https://blog.logrocket.com/programmatically-downloading-files-browser/
-        await Bucket.uploadFile(env, fileName, markerResponse.blob())
+        // Блоб сохраняем в файловое хранилище.
+        // https://blog.logrocket.com/programmatically-downloading-files-browser/
+        await Bucket.uploadFile(env, fileName, marker)
 
-        text = prepareAnswerText(body, state)
+        // Сохранить в стэйт ключ файла.
+        await state.addRow(env, user, fileName)
+
+        text = "Выберите официальные языки этой страны."
         answer = prepareTelegramAnswer(body, text)
         return getResponse(answer)
       case 6:
+        // Шестого шага нет, потому что мы на этом шаге автоматизированно добавляем ключ файлика с маркером на файловом хранилище.
+        throw new Error("thereIsNo6sStep")
+      case 7:
+        text = "Выберите официальные языки этой страны."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 8:
         // Создаём страну.
         const country = new Country(state)
         await country.save(env)
@@ -266,20 +262,34 @@ class State {
     this.current = []
   }
 
-  async update(env, body, user) {
-    // Получаем текущий стэйт, чтобы проверить, что он вообще есть.
-    const currentState = await env.db.prepare("SELECT state FROM User WHERE username = ?").bind(user.username).all()
+  async addRow(env, user, row) {
+    const checkedState = await State.#checkUserState(env, user)
 
     // Если текущего стэйта нет (то есть не возвращается ни одного объекта), то создаём новую строку и наполняем её новым сообщением.
-    if (currentState.results.length == 0) {
-      await env.db.prepare("INSERT INTO User (username, state) VALUES (?, ?)").bind(user.username, body.message.text).run()
-      this.current = [body.message.text]
+    if (!checkedState) {
+      this.current = await State.#createUserState(env, user, row)
     } else {
       // Если стэйт есть, то возвращаем текущий стэйт + новое сообщение.
-      const newState = currentState.results[0].state + "\t" + body.message.text
+      const newState = checkedState + "\t" + row
       await env.db.prepare("UPDATE User SET state = ? WHERE username = ?").bind(newState, user.username).run()
       this.current = newState.split("\t")
     }
+  }
+
+  static async #checkUserState(env, user) {
+    // Получаем текущий стэйт, чтобы проверить, что он вообще есть.
+    const currentState = await env.db.prepare("SELECT state FROM User WHERE username = ?").bind(user.username).all()
+
+    if (currentState.results.length == 0) {
+      return false
+    }
+
+    return currentState.results[0].state
+  }
+
+  static async #createUserState(env, user, row) {
+    await env.db.prepare("INSERT INTO User (username, state) VALUES (?, ?)").bind(user.username, row).run()
+    return [row]
   }
 
   async reset(env, user) {
@@ -288,6 +298,20 @@ class State {
 
     // Очистить свойство.
     this.current = []
+  }
+}
+
+class Bucket {
+  static async file(env, key) {
+    return await env.bucket.get(key)
+  }
+
+  static async files(env) {
+    return await env.bucket.list()
+  }
+
+  static async uploadFile(env, key, file) {
+    await env.bucket.put(key, file)
   }
 }
 
