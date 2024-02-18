@@ -144,6 +144,9 @@ class Country {
     this.emoji = state.current[2]
     this.population = parseInt(state.current[3])
     this.marker = state.current[5]
+
+    // Получаем языки страны.
+    // TODO: здесь остановился.
     // TODO: нужно думать.
     //this.languages = state.current[5]
   }
@@ -214,7 +217,7 @@ class Country {
         // Шестого шага нет, потому что мы на этом шаге автоматизированно добавляем ключ файлика с маркером на файловом хранилище.
         throw new Error("thereIsNo6sStep")
       case 7:
-        text = "Выберите официальные языки этой страны."
+        text = "Напишите официальные языки этой страны через запятую."
         answer = prepareTelegramAnswer(body, text)
         return getResponse(answer)
       case 8:
