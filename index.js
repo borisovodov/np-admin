@@ -30,7 +30,7 @@ export default {
     case "/addcountry":
       return await Country.creating(env, body, user, state)
     case "/addcity":
-      break
+      return await City.creating(env, body, user, state)
     case "/addsender":
       break
     case "/addformatpaper":
@@ -82,15 +82,40 @@ export default {
 
 class Newspaper {
   static async all(env) {
-    return await env.db.prepare('SELECT * FROM newspaper').all()
+    return await env.db.prepare('SELECT * FROM Newspaper').all()
   }
 }
 
 class Language {
-  constructor(state) {
+  constructor(stateOrName) {
     this.id = crypto.randomUUID()
-    this.name = state.current[1]
-    this.population = parseInt(state.current[2])
+
+    if (Array.isArray(stateOrName.current)) {
+      this.name = stateOrName.current[1]
+      this.population = parseInt(stateOrName.current[2])
+    } else {
+      this.name = stateOrName
+      this.population = null
+    }
+  }
+
+  static async getOrCreate(env, name) {
+    // Выясняем есть ли этот язык уже.
+    const languages = await Language.findByName(env, name)
+
+    // Проверяем список на пустоту.
+    if (languages.results.length == 0) {
+      const language = new Language(name)
+      await language.save(env)
+      return language.id
+    } else {
+      return languages.results[0].id
+    }
+  }
+
+  static async findByName(env, name) {
+    // Получаем список языков.
+    return await env.db.prepare("SELECT id FROM Language WHERE name = ?").bind(name).all()
   }
 
   async save(env) {
@@ -144,17 +169,17 @@ class Country {
     this.emoji = state.current[2]
     this.population = parseInt(state.current[3])
     this.marker = state.current[5]
-
-    // Получаем языки страны.
-    // TODO: здесь остановился.
-    // TODO: нужно думать.
-    //this.languages = state.current[5]
   }
 
-  async save(env) {
+  async save(env, state) {
     await env.db.prepare("INSERT INTO Country (id, name, emoji, population, marker) VALUES (?, ?, ?, ?, ?)").bind(this.id, this.name, this.emoji, this.population, this.marker).run()
-    // TODO: тут нужно предусмотреть также создание объектов в таблице `CountryAndLanguage`.
-    // ???
+
+    // Нужно пробежаться по 6-у стэйту, через запятую пробежаться по всем языкам и для каждого языка или его получить или создать и получить.
+    for (const languageString of state.current[6].split(",")) {
+      // Получаем или создаём язык.
+      const languageID = await Language.getOrCreate(env, languageString.trim())
+      await env.db.prepare("INSERT INTO CountryAndLanguage (id, country, language) VALUES (?, ?, ?)").bind(crypto.randomUUID(), this.id, languageID).run()
+    }
   }
 
   static async creating(env, body, user, state) {
@@ -210,21 +235,112 @@ class Country {
         // Сохранить в стэйт ключ файла.
         await state.addRow(env, user, fileName)
 
-        text = "Выберите официальные языки этой страны."
+        text = "Напишите официальные языки этой страны через запятую."
         answer = prepareTelegramAnswer(body, text)
         return getResponse(answer)
       case 6:
         // Шестого шага нет, потому что мы на этом шаге автоматизированно добавляем ключ файлика с маркером на файловом хранилище.
         throw new Error("thereIsNo6sStep")
       case 7:
+        // Создаём страну.
+        const country = new Country(state)
+        await country.save(env, state)
+
+        text = "Ура! Была создана страна: " + country.name
+        answer = prepareTelegramAnswer(body, text)
+        // Сбрасываем стэйт.
+        await state.reset(env, user)
+        // Отправляем сообщение.
+        return getResponse(answer)
+      default:
+        throw new Error("tooManyStepsInStateInCountryCreating")
+      }
+    } catch(error) {
+      await state.reset(env, user)
+      return getExceptionResponse(body, error)
+    }
+  }
+}
+
+class City {
+  constructor(state) {
+    this.id = crypto.randomUUID()
+    this.name = state.current[1]
+    this.country = state.current[2]
+    this.population = parseInt(state.current[3])
+    this.continent = state.current[4]
+    this.coastal = state.current[5]
+    this.elevation = parseInt(state.current[6])
+    this.coordinates = state.current[7]
+  }
+
+  async save(env, state) {
+  }
+
+  static async creating(env, body, user, state) {
+    let text
+    let answer
+
+    try {
+      // Понять на каком этапе создания мы находимся.
+      switch (state.current.length) {
+      case 1:
+        // Пишем просьбу о названии страны.
+        text = "Напишите пожалуйста название создаваемой страны."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 2:
+        // Проверяем название страны.
+        // Пишем просьбу об эмодзи страны.
+        text = "Напишите пожалуйста эмодзи создаваемой страны."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 3:
+        // TODO: Проверяем эмодзи.
+        // Пишем просьбу о количестве жителей страны.
+        text = "Напишите пожалуйста количество жителей создаваемой страны."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 4:
+        // TODO: Проверяем количество жителей страны.
+        // Запрашиваем файл с маркером.
+        text = "Отправьте файл с изображением маркера страны. Он будет использоваться на карте."
+        answer = prepareTelegramAnswer(body, text)
+        return getResponse(answer)
+      case 5:
+        // Работаем с маркером.
+        let marker
+        // С этим названием будем сохранять файл в файлохранилище. `markers/` нужен для того, чтобы файлики сохранялись в папке.
+        const fileName = "markers/" + body.message.document.file_name
+        // Получаем URL на скачивание файла.
+        const filePathUrl = "https://api.telegram.org/bot" + env.BOT_TOKEN + "/getFile?file_id=" + body.message.document.file_id
+        const filePathResponse = await fetch(filePathUrl)
+        const data = await filePathResponse.json()
+        // Делаем запрос на скачивание файла.
+        const downloadURL = "https://api.telegram.org/file/bot" + env.BOT_TOKEN + "/" + data.result.file_path
+        await fetch(downloadURL).then(response => response.blob()).then(blob => {
+          // Тут сохраняем блоб с самим файлом.
+          marker = blob
+        })
+
+        // Блоб сохраняем в файловое хранилище.
+        // https://blog.logrocket.com/programmatically-downloading-files-browser/
+        await Bucket.uploadFile(env, fileName, marker)
+
+        // Сохранить в стэйт ключ файла.
+        await state.addRow(env, user, fileName)
+
         text = "Напишите официальные языки этой страны через запятую."
         answer = prepareTelegramAnswer(body, text)
         return getResponse(answer)
-      case 8:
+      case 6:
+        // Шестого шага нет, потому что мы на этом шаге автоматизированно добавляем ключ файлика с маркером на файловом хранилище.
+        throw new Error("thereIsNo6sStep")
+      case 7:
         // Создаём страну.
         const country = new Country(state)
-        await country.save(env)
-        // Пишем радостное сообщение о том, какой язык мы создали.
+        await country.save(env, state)
+
         text = "Ура! Была создана страна: " + country.name
         answer = prepareTelegramAnswer(body, text)
         // Сбрасываем стэйт.
